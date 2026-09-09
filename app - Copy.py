@@ -10,7 +10,6 @@ import zipfile
 import glob
 import math
 import io
-import gc
 import numpy as np
 import rasterio
 from rasterio.warp import calculate_default_transform, reproject, Resampling
@@ -20,17 +19,15 @@ import pandas as pd
 
 st.set_page_config(page_title="TNRIS Data & Surface Suite", layout="wide")
 
-# Initialize Session State
+# Initialize Session State (Removed local output_dir)
 if 'map_center' not in st.session_state:
     st.session_state.map_center = [31.9686, -99.9018]
 if 'map_zoom' not in st.session_state:
     st.session_state.map_zoom = 6
-if 'map_key_version' not in st.session_state:
-    st.session_state.map_key_version = 0
-if 'basemap_choice' not in st.session_state:
-    st.session_state.basemap_choice = "Satellite"
 if 'last_drawing' not in st.session_state:
     st.session_state.last_drawing = None
+if 'programmatic_zoom' not in st.session_state:
+    st.session_state.programmatic_zoom = False
 if 'ready_zip_data' not in st.session_state:
     st.session_state.ready_zip_data = None
 if 'processed_batch_zip' not in st.session_state:
@@ -49,8 +46,6 @@ TEXAS_EPSG_DICT = {
     "NAD83 / Texas South Central (ftUS) - EPSG:2278": "EPSG:2278",
     "NAD83 / Texas South (ftUS) - EPSG:2279": "EPSG:2279",
 }
-
-MAX_UPLOAD_MB = 150.0
 
 def get_zoom_from_bounds(minx, miny, maxx, maxy):
     max_diff = max(maxx - minx, maxy - miny)
@@ -226,7 +221,7 @@ with tab1:
                 if coords:
                     st.session_state.map_center = coords
                     st.session_state.map_zoom = 14
-                    st.session_state.map_key_version += 1
+                    st.session_state.programmatic_zoom = True 
                     st.rerun()
 
     all_shapefiles = load_shapefiles("shp")
@@ -248,6 +243,7 @@ with tab1:
             default_col_index = next((i for i, f in enumerate(available_fields) if 'collection' in f.lower() or 'coll' in f.lower()), min(1, max(0, len(available_fields) - 1)))
             collection_field = st.selectbox("Shapefile Collection Field Name", available_fields, index=default_col_index)
 
+
     col1, col2 = st.columns([2, 1])
     intersecting_tiles = gpd.GeoDataFrame()
     tiles_to_download_ids = []
@@ -255,50 +251,32 @@ with tab1:
     with col1:
         st.subheader("Select Area of Interest")
         
-        # Explicit key="basemap_choice" persists choice in session state across reruns
-        st.markdown("🗺️ Select Basemap") 
-        basemap_choice = st.radio(
-            "🗺️ Select Basemap", 
-            ["Satellite", "OpenStreetMap"], 
-            horizontal=True, 
-            label_visibility="collapsed",
-            key="basemap_choice"
-        )
+        # 1. Initialize the map (defaults to OpenStreetMap)
+        m = folium.Map(location=st.session_state.map_center, zoom_start=st.session_state.map_zoom, tiles="OpenStreetMap")
         
-        # 1. Initialize map
-        m = folium.Map(location=st.session_state.map_center, zoom_start=st.session_state.map_zoom, tiles=None)
-        
-        # 2. Add ONLY the explicitly chosen basemap from session state
-        if st.session_state.basemap_choice == "Satellite":
-            folium.TileLayer(
-                tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
-                attr="Google",
-                name="Google Satellite",
-                overlay=False,
-                control=False
-            ).add_to(m)
-        else:
-            folium.TileLayer(
-                tiles="OpenStreetMap",
-                name="OpenStreetMap",
-                overlay=False,
-                control=False
-            ).add_to(m)
+        # 2. Add Google Satellite Hybrid Layer
+        folium.TileLayer(
+            tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
+            attr="Google",
+            name="Google Satellite Hybrid",
+            overlay=False,
+            control=True
+        ).add_to(m)
             
-        # 4. Add shapefile bounding box if selected
+        # 3. Add the shapefile bounding box if selected
         if selected_shp:
             active_gdf = all_shapefiles[selected_shp]
             minx, miny, maxx, maxy = active_gdf.total_bounds
             folium.Rectangle(bounds=[[miny, minx], [maxy, maxx]], color="blue", fill=False, weight=1).add_to(m)
             
-        # 5. Add drawing tool
+        # 4. Add the drawing tool
         draw = folium.plugins.Draw(
             draw_options={'polyline': False, 'polygon': False, 'circle': False, 'marker': False, 'circlemarker': False, 'rectangle': True},
             edit_options={'edit': False}
         )
         m.add_child(draw)
         
-        # 6. Add previously drawn selection
+        # 5. Add previously drawn selection (if any)
         if st.session_state.last_drawing and selected_shp:
             drawn_geom = shape(st.session_state.last_drawing["geometry"])
             active_gdf = all_shapefiles[selected_shp]
@@ -316,32 +294,23 @@ with tab1:
                     tooltip=folium.GeoJsonTooltip(fields=tooltip_fields)
                 ).add_to(m)
 
-        # Render map with dynamic key to force component remounting on programmatic zoom events
-        map_data = st_folium(
-            m, 
-            width="100%", 
-            height=450, 
-            returned_objects=["last_active_drawing"], 
-            key=f"tnris_map_{st.session_state.map_key_version}"
-        )
+        # ---> ADD LAYER CONTROL HERE (LAST) <---
+        folium.LayerControl(position="topright").add_to(m)
+
+        # Render the map
+        map_data = st_folium(m, width="100%", height=450, returned_objects=["last_active_drawing", "center", "zoom"])
         
+        if map_data and map_data.get("center"):
+            if st.session_state.get("programmatic_zoom"):
+                st.session_state.programmatic_zoom = False
+            else:
+                st.session_state.map_center = [map_data["center"]["lat"], map_data["center"]["lng"]]
+                st.session_state.map_zoom = map_data["zoom"]
+            
         if map_data and map_data.get("last_active_drawing"):
             if map_data["last_active_drawing"] != st.session_state.last_drawing:
                 st.session_state.last_drawing = map_data["last_active_drawing"]
                 st.session_state.ready_zip_data = None
-                
-                # Auto-calculate bounds from the newly drawn shape
-                try:
-                    drawn_geom = shape(map_data["last_active_drawing"]["geometry"])
-                    minx, miny, maxx, maxy = drawn_geom.bounds
-                    
-                    # Update center and zoom state to snap to the drawn rectangle
-                    st.session_state.map_center = [(miny + maxy) / 2, (minx + maxx) / 2]
-                    st.session_state.map_zoom = get_zoom_from_bounds(minx, miny, maxx, maxy)
-                    st.session_state.map_key_version += 1
-                except Exception:
-                    pass 
-                
                 st.rerun()
 
         col_btn1, col_btn2 = st.columns(2)
@@ -350,13 +319,12 @@ with tab1:
                 minx, miny, maxx, maxy = intersecting_tiles.total_bounds
                 st.session_state.map_center = [(miny + maxy) / 2, (minx + maxx) / 2]
                 st.session_state.map_zoom = get_zoom_from_bounds(minx, miny, maxx, maxy)
-                st.session_state.map_key_version += 1
+                st.session_state.programmatic_zoom = True
                 st.rerun()
         with col_btn2:
             if st.session_state.last_drawing is not None and st.button("🗑️ Clear Selection", use_container_width=True):
                 st.session_state.last_drawing = None
                 st.session_state.ready_zip_data = None
-                st.session_state.map_key_version += 1
                 st.rerun()
 
     with col2:
@@ -447,6 +415,8 @@ with tab1:
                     response = requests.get(download_url, stream=True)
                     response.raise_for_status()
                     content = response.content
+                    
+                    # Write directly to memory zip
                     zip_file.writestr(filename, content)
                 except Exception as e:
                     st.error(f"Failed on {filename}: {e}")
@@ -552,21 +522,15 @@ with tab2:
             if f.name not in st.session_state.batch_files_dict and f.name not in st.session_state.ignored_dem_files:
                 st.session_state.batch_files_dict[f.name] = f
 
-    total_size_bytes_tab2 = sum(f.size for f in st.session_state.batch_files_dict.values())
-    total_size_mb_tab2 = total_size_bytes_tab2 / (1024 * 1024)
-    is_over_limit_tab2 = total_size_mb_tab2 > MAX_UPLOAD_MB
-
     if st.session_state.batch_files_dict:
         col_hdr1, col_hdr2 = st.columns([4, 1])
         with col_hdr1:
-            st.caption(f"📂 **Uploaded Files ({len(st.session_state.batch_files_dict)})** — Total Size: **{total_size_mb_tab2:.2f} MB / {MAX_UPLOAD_MB:.0f} MB**")
+            st.caption(f"📂 **Uploaded Files ({len(st.session_state.batch_files_dict)})**")
         with col_hdr2:
             if st.button("🗑️ Clear All", use_container_width=True):
                 st.session_state.batch_files_dict.clear()
                 st.session_state.ignored_dem_files.clear()
                 st.session_state.dem_uploader_key += 1
-                st.session_state.processed_batch_zip = None
-                gc.collect()
                 st.rerun()
 
         with st.container(height=180):
@@ -587,20 +551,20 @@ with tab2:
                     del st.session_state.batch_files_dict[fname]
                     st.session_state.ignored_dem_files.add(fname)
                 st.rerun()
-
-    if is_over_limit_tab2:
-        st.error(f"⚠️ Total upload size ({total_size_mb_tab2:.1f} MB) exceeds the {MAX_UPLOAD_MB:.0f} MB limit! Please remove one or more files before processing.")
+                
+                
 
     uploaded_batch_files_list = list(st.session_state.batch_files_dict.values())
-    process_disabled_tab2 = is_over_limit_tab2 or (len(uploaded_batch_files_list) == 0)
              
-    if st.button("⚡ Process Batch Files", type="primary", use_container_width=True, disabled=process_disabled_tab2):
-        st.session_state.processed_batch_zip = None
-        gc.collect()
-        
+    if st.button("⚡ Process Batch Files", type="primary", use_container_width=True):
         raster_sources = []
-        for up_f in uploaded_batch_files_list:
-            raster_sources.append((up_f.name, io.BytesIO(up_f.read())))
+        
+        if uploaded_batch_files_list:
+            for up_f in uploaded_batch_files_list:
+                raster_sources.append((up_f.name, io.BytesIO(up_f.read())))
+        else:
+            st.error("No raster files uploaded. Upload files first.")
+            st.stop()
             
         st.info(f"Starting batch conversion for {len(raster_sources)} tiles...")
         
@@ -618,6 +582,13 @@ with tab2:
                         transform, width, height = calculate_default_transform(
                             src.crs, target_epsg, src.width, src.height, *src.bounds
                         )
+                        kwargs = src.meta.copy()
+                        kwargs.update({
+                            'crs': target_epsg,
+                            'transform': transform,
+                            'width': width,
+                            'height': height
+                        })
                         
                         destination = np.zeros((height, width), dtype=src.dtypes[0])
                         reproject(
@@ -643,8 +614,9 @@ with tab2:
                                 surface_factor=surface_factor
                             )
                             out_filename = f"{base_name}_{target_epsg.replace(':', '_')}.xml"
+                            
+                            # Write directly to memory zip
                             b_zip.writestr(out_filename, xml_str)
-                            del xml_str
                             
                         else:  # Reprojected GeoTIFF (.tif)
                             out_filename = f"{base_name}_{target_epsg.replace(':', '_')}.tif"
@@ -679,12 +651,10 @@ with tab2:
                                 dst.write(destination.astype(np.float32), 1)
                                 
                             tif_mem.seek(0)
-                            b_zip.writestr(out_filename, tif_mem.getvalue())
-                            tif_mem.close()
+                            tif_bytes = tif_mem.getvalue()
                             
-                        del destination
-                        gc.collect()
-
+                            # Write directly to memory zip
+                            b_zip.writestr(out_filename, tif_bytes)                            
                 except Exception as e:
                     st.error(f"Error processing {filename}: {e}")
                     
@@ -693,8 +663,6 @@ with tab2:
         batch_status.text("✅ Batch processing complete!")
         batch_zip_buffer.seek(0)
         st.session_state.processed_batch_zip = batch_zip_buffer.getvalue()
-        batch_zip_buffer.close()
-        gc.collect()
 
     if st.session_state.processed_batch_zip is not None:
         st.download_button(
@@ -753,6 +721,8 @@ with tab3:
         }
     </style>
     """, unsafe_allow_html=True)
+    
+
 
     if 'batch_shp_files_dict' not in st.session_state:
         st.session_state.batch_shp_files_dict = {}
@@ -773,21 +743,16 @@ with tab3:
             if f.name not in st.session_state.batch_shp_files_dict and f.name not in st.session_state.ignored_shp_files:
                 st.session_state.batch_shp_files_dict[f.name] = f
 
-    total_size_bytes_tab3 = sum(f.size for f in st.session_state.batch_shp_files_dict.values())
-    total_size_mb_tab3 = total_size_bytes_tab3 / (1024 * 1024)
-    is_over_limit_tab3 = total_size_mb_tab3 > MAX_UPLOAD_MB
-
     if st.session_state.batch_shp_files_dict:
         col_hdr1, col_hdr2 = st.columns([4, 1])
         with col_hdr1:
-            st.caption(f"📂 **Uploaded Files ({len(st.session_state.batch_shp_files_dict)})** — Total Size: **{total_size_mb_tab3:.2f} MB / {MAX_UPLOAD_MB:.0f} MB**")
+        # Fixed caption formatting
+            st.caption(f"📂 **Uploaded Files ({len(st.session_state.batch_shp_files_dict)})**")
         with col_hdr2:
             if st.button("🗑️ Clear All", key="clear_shp", use_container_width=True):
                 st.session_state.batch_shp_files_dict.clear()
                 st.session_state.ignored_shp_files.clear()
                 st.session_state.shp_uploader_key += 1
-                st.session_state.processed_batch_shp_zip = None
-                gc.collect()
                 st.rerun()
 
         with st.container(height=180):
@@ -809,16 +774,14 @@ with tab3:
                     st.session_state.ignored_shp_files.add(fname)
                 st.rerun()
 
-    if is_over_limit_tab3:
-        st.error(f"⚠️ Total upload size ({total_size_mb_tab3:.1f} MB) exceeds the {MAX_UPLOAD_MB:.0f} MB limit! Please remove one or more files before processing.")
 
     uploaded_shp_list = list(st.session_state.batch_shp_files_dict.values())
-    process_disabled_tab3 = is_over_limit_tab3 or (len(uploaded_shp_list) == 0)
     
-    if st.button("⚡ Process Shapefiles", type="primary", use_container_width=True, disabled=process_disabled_tab3):
-        st.session_state.processed_batch_shp_zip = None
-        gc.collect()
-        
+    if st.button("⚡ Process Shapefiles", type="primary", use_container_width=True):
+        if not uploaded_shp_list:
+            st.error("Upload at least one zipped shapefile.")
+            st.stop()
+            
         st.info(f"Starting batch conversion for {len(uploaded_shp_list)} shapefiles...")
         
         batch_shp_zip_buffer = io.BytesIO()
@@ -857,7 +820,6 @@ with tab3:
                                 )
                             
                             gdf.to_file(shp_path)
-                            del gdf
                             
                         processed_zip_buffer = io.BytesIO()
                         with zipfile.ZipFile(processed_zip_buffer, 'w', zipfile.ZIP_DEFLATED) as p_zip:
@@ -870,19 +832,15 @@ with tab3:
                         processed_zip_buffer.seek(0)
                         out_zip_filename = f"{base_name}_{target_epsg_shp.replace(':', '_')}.zip"
                         b_zip.writestr(out_zip_filename, processed_zip_buffer.read())
-                        processed_zip_buffer.close()
                         
                 except Exception as e:
                     st.error(f"Error processing {filename}: {e}")
                     
                 batch_shp_prog.progress((idx + 1) / len(uploaded_shp_list))
-                gc.collect()
 
         batch_shp_status.text("✅ Batch shapefile processing complete!")
         batch_shp_zip_buffer.seek(0)
         st.session_state.processed_batch_shp_zip = batch_shp_zip_buffer.getvalue()
-        batch_shp_zip_buffer.close()
-        gc.collect()
 
     if st.session_state.get('processed_batch_shp_zip') is not None:
         st.download_button(
