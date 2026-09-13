@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 import folium
 from streamlit_folium import st_folium
 import geopandas as gpd
@@ -206,7 +206,7 @@ def convert_raster_to_landxml_str(data_arr, transform, nodata_val, surface_name=
 # MAIN MULTI-TAB INTERFACE
 # ---------------------------------------------------------
 st.markdown(
-    "<h1 style='text-align: center;'>ðﾟﾗﾺ️ TxGIO (TNRIS) GIS Data Downloader And Processor</h1>", 
+    "<h1 style='text-align: center;'>🗺️ TxGIO (TNRIS) GIS Data Downloader And Processor</h1>", 
     unsafe_allow_html=True
 )
 
@@ -231,7 +231,7 @@ with tab1:
     st.subheader("A. Area of Interest Selection")
     col_search1, col_search2 = st.columns([4, 1])
     with col_search1:
-        address_query = st.text_input("ðﾟﾔﾍ Search Address or Location", placeholder="Enter address...", label_visibility="collapsed")
+        address_query = st.text_input("🔍 Search Address or Location", placeholder="Enter address...", label_visibility="collapsed")
     with col_search2:
         if st.button("Go to Address", use_container_width=True):
             if address_query:
@@ -268,9 +268,9 @@ with tab1:
     with col1:
         st.subheader("Select Area of Interest")
         
-        st.markdown("ðﾟﾗﾺ️ Select Basemap") 
+        st.markdown("🗺️ Select Basemap") 
         basemap_choice = st.radio(
-            "ðﾟﾗﾺ️ Select Basemap", 
+            "🗺️ Select Basemap", 
             ["Satellite", "OpenStreetMap"], 
             horizontal=True, 
             label_visibility="collapsed",
@@ -350,14 +350,14 @@ with tab1:
 
         col_btn1, col_btn2 = st.columns(2)
         with col_btn1:
-            if not intersecting_tiles.empty and st.button("ðﾟﾓﾍ Zoom to Selected", use_container_width=True):
+            if not intersecting_tiles.empty and st.button("📍 Zoom to Selected", use_container_width=True):
                 minx, miny, maxx, maxy = intersecting_tiles.total_bounds
                 st.session_state.map_center = [(miny + maxy) / 2, (minx + maxx) / 2]
                 st.session_state.map_zoom = get_zoom_from_bounds(minx, miny, maxx, maxy)
                 st.session_state.map_key_version += 1
                 st.rerun()
         with col_btn2:
-            if st.session_state.last_drawing is not None and st.button("ðﾟﾗﾑ️ Clear Selection", use_container_width=True):
+            if st.session_state.last_drawing is not None and st.button("🗑️ Clear Selection", use_container_width=True):
                 st.session_state.last_drawing = None
                 st.session_state.ready_zip_data = None
                 st.session_state.map_key_version += 1
@@ -392,7 +392,7 @@ with tab1:
 
     st.markdown("---")
 
-    if st.button("ðﾟﾚﾀ Start Download", type="primary", use_container_width=True):
+    if st.button("🚀 Start Download", type="primary", use_container_width=True):
         if not tiles_to_download_ids:
             st.error("Please draw a bounding box first.")
             st.stop()
@@ -462,7 +462,7 @@ with tab1:
 
     if st.session_state.ready_zip_data is not None:
         st.download_button(
-            label="ðﾟﾒﾾ Save Downloaded Tiles (.zip)",
+            label="💾 Save Downloaded Tiles (.zip)",
             data=st.session_state.ready_zip_data,
             file_name=f"TNRIS_Downloads_{selected_item}.zip",
             mime="application/zip",
@@ -563,9 +563,9 @@ with tab2:
     if st.session_state.batch_files_dict:
         col_hdr1, col_hdr2 = st.columns([4, 1])
         with col_hdr1:
-            st.caption(f"ðﾟﾓﾂ **Uploaded Files ({len(st.session_state.batch_files_dict)})** — Total Size: **{total_size_mb_tab2:.2f} MB / {MAX_UPLOAD_MB:.0f} MB**")
+            st.caption(f"📂 **Uploaded Files ({len(st.session_state.batch_files_dict)})** — Total Size: **{total_size_mb_tab2:.2f} MB / {MAX_UPLOAD_MB:.0f} MB**")
         with col_hdr2:
-            if st.button("ðﾟﾗﾑ️ Clear All", use_container_width=True):
+            if st.button("🗑️ Clear All", use_container_width=True):
                 st.session_state.batch_files_dict.clear()
                 st.session_state.ignored_dem_files.clear()
                 st.session_state.dem_uploader_key += 1
@@ -702,7 +702,7 @@ with tab2:
 
     if st.session_state.processed_batch_zip is not None:
         st.download_button(
-            label="ðﾟﾒﾾ Save Batch Processed Files (.zip)",
+            label="💾 Save Batch Processed Files (.zip)",
             data=st.session_state.processed_batch_zip,
             file_name="TNRIS_Batch_Processed_Surfaces.zip",
             mime="application/zip",
@@ -784,9 +784,9 @@ with tab3:
     if st.session_state.batch_shp_files_dict:
         col_hdr1, col_hdr2 = st.columns([4, 1])
         with col_hdr1:
-            st.caption(f"ðﾟﾓﾂ **Uploaded Files ({len(st.session_state.batch_shp_files_dict)})** — Total Size: **{total_size_mb_tab3:.2f} MB / {MAX_UPLOAD_MB:.0f} MB**")
+            st.caption(f"📂 **Uploaded Files ({len(st.session_state.batch_shp_files_dict)})** — Total Size: **{total_size_mb_tab3:.2f} MB / {MAX_UPLOAD_MB:.0f} MB**")
         with col_hdr2:
-            if st.button("ðﾟﾗﾑ️ Clear All", key="clear_shp", use_container_width=True):
+            if st.button("🗑️ Clear All", key="clear_shp", use_container_width=True):
                 st.session_state.batch_shp_files_dict.clear()
                 st.session_state.ignored_shp_files.clear()
                 st.session_state.shp_uploader_key += 1
@@ -890,7 +890,7 @@ with tab3:
 
     if st.session_state.get('processed_batch_shp_zip') is not None:
         st.download_button(
-            label="ðﾟﾒﾾ Save Batch Processed Shapefiles (.zip)",
+            label="💾 Save Batch Processed Shapefiles (.zip)",
             data=st.session_state.processed_batch_shp_zip,
             file_name="TNRIS_Batch_Processed_Shapefiles.zip",
             mime="application/zip",
@@ -908,9 +908,9 @@ with tab4:
     
     st.markdown("""
     **Navigation Controls:** 
-    * ðﾟﾔﾄ **Rotate:** Left-Click + Drag 
+    * 🔄 **Rotate:** Left-Click + Drag 
     * ✋ **Pan:** Right-Click + Drag (or `Shift` + Left-Click + Drag)
-    * ðﾟﾔﾍ **Zoom:** Scroll Wheel
+    * 🔍 **Zoom:** Scroll Wheel
     """)
     st.caption("Upload up to 4 files (DEMs or LandXMLs) and use checkboxes to toggle visibility. Models must share the same coordinate system.")
     
@@ -1084,8 +1084,8 @@ with tab4:
     if "drawn_alignment" not in st.session_state:
         st.session_state.drawn_alignment = None
         
-    with st.expander("ðﾟﾓﾐ Dynamic Alignment Profile Tool (Interactive Map Cut)", expanded=False):
-        st.markdown("ðﾟﾓﾍ **How to use:** Use the **Draw Polyline** tool on the left side of the map to trace your alignment over the terrain. Double-click to finish the line.")
+    with st.expander("📐 Dynamic Alignment Profile Tool (Interactive Map Cut)", expanded=False):
+        st.markdown("📍 **How to use:** Use the **Draw Polyline** tool on the left side of the map to trace your alignment over the terrain. Double-click to finish the line.")
         
         if not parsed_surfaces_for_profile:
             st.warning("Please upload and process at least one GeoTIFF (.tif) DEM file above to generate the base map.")
@@ -1139,6 +1139,7 @@ with tab4:
                 """
                 m_profile.get_root().header.add_child(folium.Element(legend_css))
                 
+                #terrain_cmap = cm.get_cmap('terrain', 15)
                 terrain_cmap = mpl.colormaps['terrain'].resampled(15)
                 hex_colors = [mcolors.to_hex(terrain_cmap(i)) for i in np.linspace(0, 1, 15)]
                 
@@ -1211,6 +1212,7 @@ with tab4:
                         
                         if dem['mask'].any() and global_max > global_min:
                             norm = ((dem['array'] - global_min) / (global_max - global_min) * 255).clip(0, 255).astype(np.uint8)
+                            #colored = cm.terrain(norm / 255.0) * 255
                             colored = terrain_cmap(norm / 255.0) * 255
                             rgba_img = colored.astype(np.uint8)
                             
@@ -1259,10 +1261,10 @@ with tab4:
                         
             with col_map2:
                 st.markdown("##### Map Tools")
-                if st.button("ðﾟﾔﾍ Zoom to Files", use_container_width=True, help="Instantly re-center and zoom the map to the bounding box of your uploaded DEM files."):
+                if st.button("🔍 Zoom to Files", use_container_width=True, help="Instantly re-center and zoom the map to the bounding box of your uploaded DEM files."):
                     st.session_state.prof_map_key += 1
                     st.rerun()
-                if st.button("ðﾟﾗﾑ️ Clear Alignment", use_container_width=True):
+                if st.button("🗑️ Clear Alignment", use_container_width=True):
                     st.session_state.drawn_alignment = None
                     st.session_state.prof_map_key += 1
                     st.rerun()
