@@ -7,3 +7,8 @@ requests>=2.31.0
 numpy>=1.26.4
 rasterio>=1.3.9
 pandas>=2.2.0
+plotly
+pyproj
+affine
+matplotlib
+branca
