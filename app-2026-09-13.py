@@ -17,10 +17,8 @@ from rasterio.warp import calculate_default_transform, reproject, Resampling
 import tempfile
 from datetime import datetime
 import pandas as pd
-import plotly.graph_objects as go
 
 st.set_page_config(page_title="TNRIS Data & Surface Suite", layout="wide")
-
 
 # Initialize Session State
 if 'map_center' not in st.session_state:
@@ -205,22 +203,11 @@ def convert_raster_to_landxml_str(data_arr, transform, nodata_val, surface_name=
 # ---------------------------------------------------------
 # MAIN MULTI-TAB INTERFACE
 # ---------------------------------------------------------
-st.markdown(
-    "<h1 style='text-align: center;'>🗺️ TxGIO (TNRIS) GIS Data Downloader And Processor</h1>", 
-    unsafe_allow_html=True
-)
-
-st.markdown(
-    "<p style='text-align: center;'><b><i>Developed by Dawit Ghebreyesus</i></b></p>", 
-    unsafe_allow_html=True
-)
-
-st.markdown("---")  
-tab1, tab2, tab3, tab4 = st.tabs([
+st.title("🗺️ TxGIO (TNRIS) GIS Data Downloader And Processor.")
+tab1, tab2, tab3 = st.tabs([
     "1. TxGIO (TNRIS) Tile Downloader", 
     "2. Batch LandXML & Coordinate Converter", 
-    "3. Batch Shapefile Reprojection",
-    "4. 3D Terrain Viewer"
+    "3. Batch Shapefile Reprojection"
 ])
 
 # =========================================================
@@ -268,6 +255,7 @@ with tab1:
     with col1:
         st.subheader("Select Area of Interest")
         
+        # Explicit key="basemap_choice" persists choice in session state across reruns
         st.markdown("🗺️ Select Basemap") 
         basemap_choice = st.radio(
             "🗺️ Select Basemap", 
@@ -277,8 +265,10 @@ with tab1:
             key="basemap_choice"
         )
         
+        # 1. Initialize map
         m = folium.Map(location=st.session_state.map_center, zoom_start=st.session_state.map_zoom, tiles=None)
         
+        # 2. Add ONLY the explicitly chosen basemap from session state
         if st.session_state.basemap_choice == "Satellite":
             folium.TileLayer(
                 tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
@@ -295,17 +285,20 @@ with tab1:
                 control=False
             ).add_to(m)
             
+        # 4. Add shapefile bounding box if selected
         if selected_shp:
             active_gdf = all_shapefiles[selected_shp]
             minx, miny, maxx, maxy = active_gdf.total_bounds
             folium.Rectangle(bounds=[[miny, minx], [maxy, maxx]], color="blue", fill=False, weight=1).add_to(m)
             
+        # 5. Add drawing tool
         draw = folium.plugins.Draw(
             draw_options={'polyline': False, 'polygon': False, 'circle': False, 'marker': False, 'circlemarker': False, 'rectangle': True},
             edit_options={'edit': False}
         )
         m.add_child(draw)
         
+        # 6. Add previously drawn selection
         if st.session_state.last_drawing and selected_shp:
             drawn_geom = shape(st.session_state.last_drawing["geometry"])
             active_gdf = all_shapefiles[selected_shp]
@@ -323,6 +316,7 @@ with tab1:
                     tooltip=folium.GeoJsonTooltip(fields=tooltip_fields)
                 ).add_to(m)
 
+        # Render map with dynamic key to force component remounting on programmatic zoom events
         map_data = st_folium(
             m, 
             width="100%", 
@@ -336,10 +330,12 @@ with tab1:
                 st.session_state.last_drawing = map_data["last_active_drawing"]
                 st.session_state.ready_zip_data = None
                 
+                # Auto-calculate bounds from the newly drawn shape
                 try:
                     drawn_geom = shape(map_data["last_active_drawing"]["geometry"])
                     minx, miny, maxx, maxy = drawn_geom.bounds
                     
+                    # Update center and zoom state to snap to the drawn rectangle
                     st.session_state.map_center = [(miny + maxy) / 2, (minx + maxx) / 2]
                     st.session_state.map_zoom = get_zoom_from_bounds(minx, miny, maxx, maxy)
                     st.session_state.map_key_version += 1
@@ -650,7 +646,7 @@ with tab2:
                             b_zip.writestr(out_filename, xml_str)
                             del xml_str
                             
-                        else:  
+                        else:  # Reprojected GeoTIFF (.tif)
                             out_filename = f"{base_name}_{target_epsg.replace(':', '_')}.tif"
                             
                             if z_scale != 1.0:
@@ -897,458 +893,3 @@ with tab3:
             type="primary",
             use_container_width=True
         )
-        
-        
-        
-# =========================================================
-# TAB 4: 3D TERRAIN VIEWER & ALIGNMENT PROFILER
-# =========================================================
-with tab4:
-    st.subheader("Interactive 3D Terrain Viewer & Alignment Profiler")
-    
-    st.markdown("""
-    **Navigation Controls:** 
-    * 🔄 **Rotate:** Left-Click + Drag 
-    * ✋ **Pan:** Right-Click + Drag (or `Shift` + Left-Click + Drag)
-    * 🔍 **Zoom:** Scroll Wheel
-    """)
-    st.caption("Upload up to 4 files (DEMs or LandXMLs) and use checkboxes to toggle visibility. Models must share the same coordinate system.")
-    
-    col_v1, col_v2 = st.columns([3, 1])
-    
-    with col_v1:
-        uploaded_3d_files = st.file_uploader("Upload up to 4 DEMs (.tif) or LandXMLs (.xml)", type=["tif", "xml"], accept_multiple_files=True, key="3d_uploader",help="Upload up to 4 raster DEMs (.tif) or LandXML meshes (.xml) sharing a common coordinate system for simultaneous 3D comparison.")
-        
-        if len(uploaded_3d_files) > 4:
-            st.warning("Maximum of 4 files allowed. Only the first 4 will be available for viewing.")
-            uploaded_3d_files = uploaded_3d_files[:4]
-            
-        selected_files = []
-        if uploaded_3d_files:
-            st.markdown("**Toggle Visibility:**")
-            cols = st.columns(len(uploaded_3d_files))
-            for i, f in enumerate(uploaded_3d_files):
-                with cols[i]:
-                    if st.checkbox(f.name, value=True, key=f"chk_{f.name}", help=f"Toggle 3D rendering visibility for {f.name}."):
-                        selected_files.append(f)
-        
-    with col_v2:
-        st.markdown("##### Viewer Settings")
-        chart_height = st.slider("Viewer Height (px)", min_value=500, max_value=1200, value=900, step=50, help="Define the vertical display height (in pixels) of the interactive 3D Plotly rendering canvas." )
-        z_exaggeration = st.slider("Vertical Exaggeration", min_value=1.0, max_value=20.0, value=10.0, step=0.5, help="Scale vertical elevation heights relative to horizontal dimensions (1.0 = true 1:1 scale).")
-        downsample_factor = st.slider("GeoTIFF Downsample Factor", min_value=1, max_value=20, value=5, help="Skip grid pixels to reduce browser memory load and accelerate 3D rendering performance (1 = full resolution).")
-        colorscale = st.selectbox("Color Theme", ["Earth", "Viridis", "Cividis", "Turbo", "Gray"], index=0, help="Select a color gradient palette theme for rendering surface elevations.")
-
-    parsed_surfaces_for_profile = {}
-
-    if selected_files:
-        with st.spinner("Processing 3D Models..."):
-            parsed_data = []
-            
-            global_zmin, global_zmax = float('inf'), float('-inf')
-            global_xmin, global_xmax = float('inf'), float('-inf')
-            global_ymin, global_ymax = float('inf'), float('-inf')
-            
-            for file_obj in selected_files:
-                file_ext = os.path.splitext(file_obj.name)[1].lower()
-                
-                try:
-                    if file_ext == ".tif":
-                        with rasterio.open(file_obj) as src:
-                            z_data = src.read(1)
-                            nodata = src.nodata
-                            
-                            if nodata is not None:
-                                z_data = np.where(z_data == nodata, np.nan, z_data)
-                            
-                            parsed_surfaces_for_profile[file_obj.name] = file_obj 
-                            
-                            z_render = z_data[::downsample_factor, ::downsample_factor]
-                            left, bottom, right, top = src.bounds
-                            x = np.linspace(left, right, z_render.shape[1])
-                            y = np.linspace(top, bottom, z_render.shape[0])
-                            
-                            local_zmin, local_zmax = np.nanmin(z_data), np.nanmax(z_data)
-                            global_zmin, global_zmax = min(global_zmin, local_zmin), max(global_zmax, local_zmax)
-                            global_xmin, global_xmax = min(global_xmin, left), max(global_xmax, right)
-                            global_ymin, global_ymax = min(global_ymin, bottom), max(global_ymax, top)
-                            
-                            parsed_data.append({
-                                'type': 'surface',
-                                'x': x, 'y': y, 'z': z_render,
-                                'name': file_obj.name
-                            })
-                    
-                    elif file_ext == ".xml":
-                        file_obj.seek(0)
-                        xml_str = file_obj.read().decode('utf-8')
-                        root = ET.fromstring(xml_str)
-                        
-                        pts_dict, faces = {}, []
-                        for elem in root.iter():
-                            if elem.tag.endswith('P'):
-                                pt_id = int(elem.attrib['id'])
-                                coords = list(map(float, elem.text.split()))
-                                if len(coords) >= 3:
-                                    pts_dict[pt_id] = (coords[1], coords[0], coords[2])
-                            elif elem.tag.endswith('F'):
-                                face_indices = list(map(int, elem.text.split()))
-                                if len(face_indices) == 3:
-                                    faces.append(face_indices)
-                        
-                        if pts_dict and faces:
-                            id_to_idx = {pid: i for i, pid in enumerate(pts_dict.keys())}
-                            x = [pts_dict[pid][0] for pid in pts_dict.keys()]
-                            y = [pts_dict[pid][1] for pid in pts_dict.keys()]
-                            z = [pts_dict[pid][2] for pid in pts_dict.keys()]
-                            i_idx = [id_to_idx[f[0]] for f in faces]
-                            j_idx = [id_to_idx[f[1]] for f in faces]
-                            k_idx = [id_to_idx[f[2]] for f in faces]
-                            
-                            local_zmin, local_zmax = min(z), max(z)
-                            global_zmin, global_zmax = min(global_zmin, local_zmin), max(global_zmax, local_zmax)
-                            global_xmin, global_xmax = min(global_xmin, min(x)), max(global_xmax, max(x))
-                            global_ymin, global_ymax = min(global_ymin, min(y)), max(global_ymax, max(y))
-                            
-                            parsed_data.append({
-                                'type': 'mesh',
-                                'x': x, 'y': y, 'z': z,
-                                'i': i_idx, 'j': j_idx, 'k': k_idx,
-                                'name': file_obj.name
-                            })
-                            
-                except Exception as e:
-                    st.error(f"Error processing {file_obj.name}: {e}")
-
-            if parsed_data:
-                fig = go.Figure()
-                for idx, data in enumerate(parsed_data):
-                    show_legend = (idx == 0)
-                    if data['type'] == 'surface':
-                        fig.add_trace(go.Surface(
-                            x=data['x'], y=data['y'], z=data['z'],
-                            colorscale=colorscale, cmin=global_zmin, cmax=global_zmax,
-                            showscale=show_legend, colorbar=dict(title="Elevation") if show_legend else None,
-                            name=data['name']
-                        ))
-                    elif data['type'] == 'mesh':
-                        fig.add_trace(go.Mesh3d(
-                            x=data['x'], y=data['y'], z=data['z'],
-                            i=data['i'], j=data['j'], k=data['k'],
-                            intensity=data['z'], colorscale=colorscale, cmin=global_zmin, cmax=global_zmax,
-                            showscale=show_legend, colorbar=dict(title="Elevation") if show_legend else None,
-                            name=data['name']
-                        ))
-
-                dx = global_xmax - global_xmin
-                dy = global_ymax - global_ymin
-                max_horizontal_dim = max(dx, dy) if max(dx, dy) > 0 else 1.0
-                
-                aspect_x = dx / max_horizontal_dim
-                aspect_y = dy / max_horizontal_dim
-                dz = global_zmax - global_zmin
-                aspect_z = (dz / max_horizontal_dim) * z_exaggeration if dz > 0 else 0.1 * z_exaggeration
-
-                fig.update_layout(
-                    uirevision='locked_camera',
-                    scene=dict(
-                        aspectmode='manual',
-                        aspectratio=dict(x=aspect_x, y=aspect_y, z=aspect_z),
-                        xaxis_title='Easting / X', yaxis_title='Northing / Y', zaxis_title='Elevation'
-                    ),
-                    height=chart_height,
-                    margin=dict(l=0, r=0, b=0, t=0)
-                )
-                
-                viewer_config = {
-                    'displaylogo': False,
-                    'modeBarButtonsToRemove': ['pan3d', 'orbitRotation', 'tableRotation', 'resetCameraDefault3d', 'resetCameraLastSave3d']
-                }
-                st.plotly_chart(fig, use_container_width=True, config=viewer_config)
-
-    from pyproj import Transformer
-    from affine import Affine
-    import matplotlib.cm as cm
-    import branca.colormap as cmp
-    import matplotlib.colors as mcolors
-    
-    
-    # =========================================================
-    # DYNAMIC ALIGNMENT PROFILE TOOL SECTION
-    # =========================================================
-    st.markdown("---")
-    
-    if "prof_map_key" not in st.session_state:
-        st.session_state.prof_map_key = 0
-    if "drawn_alignment" not in st.session_state:
-        st.session_state.drawn_alignment = None
-        
-    with st.expander("📐 Dynamic Alignment Profile Tool (Interactive Map Cut)", expanded=False):
-        st.markdown("📍 **How to use:** Use the **Draw Polyline** tool on the left side of the map to trace your alignment over the terrain. Double-click to finish the line.")
-        
-        if not parsed_surfaces_for_profile:
-            st.warning("Please upload and process at least one GeoTIFF (.tif) DEM file above to generate the base map.")
-        else:
-            col_map1, col_map2 = st.columns([4, 1])
-            
-            with col_map1:
-                init_lats = []
-                init_lons = []
-                for name, obj in parsed_surfaces_for_profile.items():
-                    try:
-                        obj.seek(0)
-                        with rasterio.open(obj) as src:
-                            transformer = Transformer.from_crs(src.crs, "EPSG:4326", always_xy=True)
-                            left, bottom, right, top = src.bounds
-                            for x, y in [(left, bottom), (right, bottom), (left, top), (right, top)]:
-                                lon, lat = transformer.transform(x, y)
-                                init_lons.append(lon)
-                                init_lats.append(lat)
-                    except Exception:
-                        pass
-
-                if init_lats and init_lons:
-                    min_lon, max_lon = min(init_lons), max(init_lons)
-                    min_lat, max_lat = min(init_lats), max(init_lats)
-                    prof_center = [(min_lat + max_lat) / 2, (min_lon + max_lon) / 2]
-                    prof_zoom = get_zoom_from_bounds(min_lon, min_lat, max_lon, max_lat)
-                else:
-                    prof_center = st.session_state.map_center
-                    prof_zoom = st.session_state.map_zoom
-
-                m_profile = folium.Map(location=prof_center, zoom_start=prof_zoom, tiles="OpenStreetMap")
-                map_bounds = []
-                
-                legend_css = """
-                <style>
-                svg text {
-                    font-weight: 900 !important;
-                    fill: #000000 !important;
-                    text-shadow: 
-                        2px 0px 0px #FFFFFF, 
-                        -2px 0px 0px #FFFFFF, 
-                        0px 2px 0px #FFFFFF, 
-                        0px -2px 0px #FFFFFF, 
-                        1px 1px 0px #FFFFFF, 
-                        -1px -1px 0px #FFFFFF, 
-                        1px -1px 0px #FFFFFF, 
-                        -1px 1px 0px #FFFFFF !important;
-                }
-                </style>
-                """
-                m_profile.get_root().header.add_child(folium.Element(legend_css))
-                
-                terrain_cmap = cm.get_cmap('terrain', 15)
-                hex_colors = [mcolors.to_hex(terrain_cmap(i)) for i in np.linspace(0, 1, 15)]
-                
-                processed_dems = []
-                global_min = float('inf')
-                global_max = float('-inf')
-                
-                for name, obj in parsed_surfaces_for_profile.items():
-                    obj.seek(0)
-                    with rasterio.open(obj) as src:
-                        dst_crs = 'EPSG:4326'
-                        
-                        transform, width, height = calculate_default_transform(
-                            src.crs, dst_crs, src.width, src.height, *src.bounds
-                        )
-                        
-                        max_dim = 500.0
-                        ds_factor = int(max(1, max(width, height) / max_dim))
-                        
-                        dst_width = max(1, width // ds_factor)
-                        dst_height = max(1, height // ds_factor)
-                        scaled_transform = transform * Affine.scale(ds_factor)
-                        
-                        destination = np.zeros((dst_height, dst_width), dtype=np.float32)
-                        
-                        reproject(
-                            source=rasterio.band(src, 1),
-                            destination=destination,
-                            src_transform=src.transform,
-                            src_crs=src.crs,
-                            dst_transform=scaled_transform,
-                            dst_crs=dst_crs,
-                            resampling=Resampling.average
-                        )
-                        
-                        valid_mask = ~np.isnan(destination)
-                        if src.nodata is not None:
-                            valid_mask &= (destination != src.nodata)
-                        
-                        if valid_mask.any():
-                            local_min = np.nanmin(destination[valid_mask])
-                            local_max = np.nanmax(destination[valid_mask])
-                            global_min = min(global_min, local_min)
-                            global_max = max(global_max, local_max)
-                            
-                        from rasterio.transform import array_bounds
-                        lon_min, lat_min, lon_max, lat_max = array_bounds(dst_height, dst_width, scaled_transform)
-                        bounds = [[lat_min, lon_min], [lat_max, lon_max]]
-                        map_bounds.extend(bounds)
-                        
-                        processed_dems.append({
-                            'name': name,
-                            'array': destination,
-                            'mask': valid_mask,
-                            'bounds': bounds
-                        })
-
-                if global_min < float('inf') and global_max > float('-inf'):
-                    colormap = cmp.LinearColormap(
-                        colors=hex_colors,
-                        vmin=float(global_min),
-                        vmax=float(global_max),
-                        caption="Elevation (Project Units)"
-                    )
-                    colormap.add_to(m_profile)
-                    
-                    for dem in processed_dems:
-                        dst_height, dst_width = dem['array'].shape
-                        rgba_img = np.zeros((dst_height, dst_width, 4), dtype=np.uint8)
-                        
-                        if dem['mask'].any() and global_max > global_min:
-                            norm = ((dem['array'] - global_min) / (global_max - global_min) * 255).clip(0, 255).astype(np.uint8)
-                            colored = cm.terrain(norm / 255.0) * 255
-                            rgba_img = colored.astype(np.uint8)
-                            
-                        rgba_img[..., 3] = np.where(dem['mask'], 160, 0)
-                        
-                        folium.raster_layers.ImageOverlay(
-                            image=rgba_img,
-                            bounds=dem['bounds'],
-                            opacity=0.9, 
-                            name=dem['name']
-                        ).add_to(m_profile)
-                
-                if map_bounds:
-                    flat_lats = [pt[0] for pt in map_bounds]
-                    flat_lons = [pt[1] for pt in map_bounds]
-                    m_profile.fit_bounds([[min(flat_lats), min(flat_lons)], [max(flat_lats), max(flat_lons)]])
-
-                draw = folium.plugins.Draw(
-                    draw_options={
-                        'polyline': {
-                            'metric': False,  
-                            'feet': True      
-                        },
-                        'polygon': False, 
-                        'circle': False, 
-                        'marker': False, 
-                        'circlemarker': False, 
-                        'rectangle': False
-                    },
-                    edit_options={'edit': True}
-                )
-                m_profile.add_child(draw)
-
-                map_data = st_folium(
-                    m_profile, 
-                    key=f"prof_map_{st.session_state.prof_map_key}", 
-                    width="100%", 
-                    height=500,
-                    returned_objects=["last_active_drawing"]
-                )
-                
-                if map_data and map_data.get("last_active_drawing"):
-                    geom = map_data["last_active_drawing"]["geometry"]
-                    if geom["type"] == "LineString":
-                        st.session_state.drawn_alignment = geom["coordinates"]                        
-                        
-            with col_map2:
-                st.markdown("##### Map Tools")
-                if st.button("🔍 Zoom to Files", use_container_width=True, help="Instantly re-center and zoom the map to the bounding box of your uploaded DEM files."):
-                    st.session_state.prof_map_key += 1
-                    st.rerun()
-                if st.button("🗑️ Clear Alignment", use_container_width=True):
-                    st.session_state.drawn_alignment = None
-                    st.session_state.prof_map_key += 1
-                    st.rerun()
-
-        st.markdown("---")
-        st.markdown("##### Process Alignment Coordinates")
-        
-        col_prof1, col_prof2 = st.columns([1, 2])
-        with col_prof1:
-            sample_step = st.number_input("Profile Sampling Interval (feet/meters)", min_value=0.5, max_value=200.0, value=5.0, step=1.0, help="Specify the distance spacing interval between cross-section elevation sample points extracted along the alignment line.")
-        
-        if st.button("Generate Elevation Profile Graph", type="primary"):
-            if not st.session_state.drawn_alignment or len(st.session_state.drawn_alignment) < 2:
-                st.error("Please draw a valid polyline on the map above first.")
-            elif not parsed_surfaces_for_profile:
-                st.warning("Please upload and process at least one GeoTIFF (.tif) DEM file above.")
-            else:
-                try:
-                    profile_fig = go.Figure()
-                    
-                    for file_name, file_obj in parsed_surfaces_for_profile.items():
-                        file_obj.seek(0)
-                        with rasterio.open(file_obj) as src:
-                            transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
-                            native_vertices = [transformer.transform(lon, lat) for lon, lat in st.session_state.drawn_alignment]
-                            
-                            stations = [0.0]
-                            sample_points = [native_vertices[0]]
-                            current_station = 0.0
-                            
-                            for idx in range(len(native_vertices) - 1):
-                                p1 = np.array(native_vertices[idx])
-                                p2 = np.array(native_vertices[idx+1])
-                                seg_len = np.linalg.norm(p2 - p1)
-                                if seg_len == 0:
-                                    continue
-                                
-                                num_steps = int(np.floor(seg_len / sample_step))
-                                for step_i in range(1, num_steps + 1):
-                                    t = (step_i * sample_step) / seg_len
-                                    pt = p1 + t * (p2 - p1)
-                                    current_station += sample_step
-                                    stations.append(current_station)
-                                    sample_points.append((pt[0], pt[1]))
-                                    
-                                remainder = seg_len - (num_steps * sample_step)
-                                if remainder > 0.01:
-                                    current_station += remainder
-                                    stations.append(current_station)
-                                    sample_points.append((p2[0], p2[1]))
-                            
-                            elevations = []
-                            valid_stations = []
-                            for stat, (x_coord, y_coord) in zip(stations, sample_points):
-                                try:
-                                    row, col = src.index(x_coord, y_coord)
-                                    if 0 <= row < src.height and 0 <= col < src.width:
-                                        window = rasterio.windows.Window(col, row, 1, 1)
-                                        val = src.read(1, window=window)[0, 0]
-                                        if val == src.nodata or np.isnan(val):
-                                            elevations.append(None)
-                                        else:
-                                            elevations.append(float(val))
-                                        valid_stations.append(stat)
-                                    else:
-                                        elevations.append(None)
-                                        valid_stations.append(stat)
-                                except Exception:
-                                    elevations.append(None)
-                                    valid_stations.append(stat)
-                                    
-                            profile_fig.add_trace(go.Scatter(
-                                x=valid_stations, y=elevations,
-                                mode='lines',
-                                name=file_name,
-                                line=dict(width=2)
-                            ))
-                            
-                    profile_fig.update_layout(
-                        title="Alignment Elevation Profile (Cross-Section)",
-                        xaxis_title="Station (Length Units in Surface CRS)",
-                        yaxis_title="Elevation",
-                        hovermode="x unified",
-                        height=500,
-                        margin=dict(l=20, r=20, t=40, b=20)
-                    )
-                    st.plotly_chart(profile_fig, use_container_width=True)
-                    
-                except Exception as profile_err:
-                    st.error(f"Error generating profile: {profile_err}")
