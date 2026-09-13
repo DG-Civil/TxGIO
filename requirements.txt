@@ -10,5 +10,5 @@ pandas>=2.2.0
 plotly
 pyproj
 affine
-matplotlib==3.8.4
+matplotlib
 branca
