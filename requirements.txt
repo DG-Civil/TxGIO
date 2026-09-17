@@ -12,3 +12,4 @@ pyproj
 affine
 matplotlib
 branca
+psutil
