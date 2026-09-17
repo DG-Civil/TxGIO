@@ -237,6 +237,14 @@ def convert_raster_to_landxml_str(data_arr, transform, nodata_val, surface_name=
 # ---------------------------------------------------------
 # MAIN MULTI-TAB INTERFACE
 # ---------------------------------------------------------
+
+st.set_page_config(
+    page_title="TxGIO Downloader",
+    page_icon="🗺️",
+    layout="wide",
+)
+
+
 st.markdown(
     "<h1 style='text-align: center;'>🗺️ TxGIO (TNRIS) GIS Data Downloader And Processor</h1>", 
     unsafe_allow_html=True
