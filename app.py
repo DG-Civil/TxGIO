@@ -54,6 +54,38 @@ TEXAS_EPSG_DICT = {
 
 MAX_UPLOAD_MB = 150.0
 
+import ctypes
+import psutil
+
+
+def enforce_cloud_memory_limit(limit_mb=900, hard_stop=True):
+    gc.collect()
+    try:
+        libc = ctypes.CDLL("libc.so.6")
+        libc.malloc_trim(0)
+    except Exception:
+        pass
+
+    parent = psutil.Process(os.getpid())
+    processes = [parent] + parent.children(recursive=True)
+    total_mb = sum(p.memory_info().rss for p in processes) / (1024 * 1024)
+
+    if total_mb > limit_mb:
+        if hard_stop:
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            st.cache_data.clear()
+            st.cache_resource.clear()
+            
+            st.error(f"⚠️ **Memory Limit Exceeded ({total_mb:.1f} MB / {limit_mb} MB)**\n\nExecution stopped. Session purged.")
+            if st.button("🔄 Hard Reset Server Memory", type="primary"):
+                os._exit(0)
+            st.stop()
+        return False # Return False for soft stops inside loops
+    return True # Safe
+
+RAM_limit=1100
+
 def get_zoom_from_bounds(minx, miny, maxx, maxy):
     max_diff = max(maxx - minx, maxy - miny)
     if max_diff == 0:
@@ -444,8 +476,33 @@ with tab1:
         status_text = st.empty()
         zip_buffer = io.BytesIO()
         
+        # with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        #     for i, (dem_id, download_url, filename, name_no_ext) in enumerate(files_to_download):
+        #         status_text.text(f"Downloading ({i+1}/{len(files_to_download)}): {filename}")
+        #         try:
+        #             response = requests.get(download_url, stream=True)
+        #             response.raise_for_status()
+        #             content = response.content
+        #             zip_file.writestr(filename, content)
+        #         except Exception as e:
+        #             st.error(f"Failed on {filename}: {e}")
+        #         progress_bar.progress((i + 1) / len(files_to_download))
+
+        # status_text.text("✅ All downloads complete!")
+        # zip_buffer.seek(0)
+        # st.session_state.ready_zip_data = zip_buffer.getvalue()
+        # --- BEFORE TAB 1 DOWNLOAD LOOP ---
+        
+        enforce_cloud_memory_limit(limit_mb=RAM_limit, hard_stop=True)
+        
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
             for i, (dem_id, download_url, filename, name_no_ext) in enumerate(files_to_download):
+                
+                # Soft RAM check inside the loop
+                if not enforce_cloud_memory_limit(limit_mb=RAM_limit-50, hard_stop=False):
+                    st.warning(f"⚠️ Memory limit approaching. Stopping at {i} of {len(files_to_download)} files. The partial batch is ready for download below.")
+                    break
+
                 status_text.text(f"Downloading ({i+1}/{len(files_to_download)}): {filename}")
                 try:
                     response = requests.get(download_url, stream=True)
@@ -456,9 +513,12 @@ with tab1:
                     st.error(f"Failed on {filename}: {e}")
                 progress_bar.progress((i + 1) / len(files_to_download))
 
-        status_text.text("✅ All downloads complete!")
+        status_text.text("✅ Download process completed.")
         zip_buffer.seek(0)
         st.session_state.ready_zip_data = zip_buffer.getvalue()
+        
+        # --- AFTER TAB 1 DOWNLOAD LOOP ---
+        enforce_cloud_memory_limit(limit_mb=RAM_limit, hard_stop=True)
 
     if st.session_state.ready_zip_data is not None:
         st.download_button(
@@ -612,8 +672,19 @@ with tab2:
         batch_prog = st.progress(0)
         batch_status = st.empty()
         
+        # --- BEFORE TAB 2 PROCESSING LOOP ---
+        enforce_cloud_memory_limit(limit_mb=RAM_limit, hard_stop=True)
+        
+        
         with zipfile.ZipFile(batch_zip_buffer, "w", zipfile.ZIP_DEFLATED) as b_zip:
             for idx, (filename, file_source) in enumerate(raster_sources):
+                
+                
+                # Soft RAM check inside the loop
+                if not enforce_cloud_memory_limit(limit_mb=RAM_limit-100, hard_stop=False):
+                    st.warning(f"⚠️ Memory limit approaching. Processed {idx} out of {len(raster_sources)} files. The partial batch is ready for download.")
+                    break
+                
                 batch_status.text(f"Processing ({idx+1}/{len(raster_sources)}): {filename}")
                 base_name = os.path.splitext(filename)[0]
                 
@@ -699,6 +770,9 @@ with tab2:
         st.session_state.processed_batch_zip = batch_zip_buffer.getvalue()
         batch_zip_buffer.close()
         gc.collect()
+        
+        # --- AFTER TAB 2 PROCESSING LOOP ---
+        enforce_cloud_memory_limit(limit_mb=RAM_limit, hard_stop=True)
 
     if st.session_state.processed_batch_zip is not None:
         st.download_button(
@@ -829,8 +903,18 @@ with tab3:
         batch_shp_prog = st.progress(0)
         batch_shp_status = st.empty()
         
+        # --- BEFORE TAB 3 PROCESSING LOOP ---
+        enforce_cloud_memory_limit(limit_mb=RAM_limit, hard_stop=True)
+        
+        
         with zipfile.ZipFile(batch_shp_zip_buffer, "w", zipfile.ZIP_DEFLATED) as b_zip:
             for idx, up_f in enumerate(uploaded_shp_list):
+                
+                # Soft RAM check inside the loop
+                if not enforce_cloud_memory_limit(limit_mb=RAM_limit-50, hard_stop=False):
+                    st.warning(f"⚠️ Memory limit approaching. Processed {idx} out of {len(uploaded_shp_list)} shapefiles. The partial batch is ready below.")
+                    break
+                
                 filename = up_f.name
                 batch_shp_status.text(f"Processing ({idx+1}/{len(uploaded_shp_list)}): {filename}")
                 base_name = os.path.splitext(filename)[0]
@@ -943,6 +1027,11 @@ with tab4:
 
     if selected_files:
         with st.spinner("Processing 3D Models..."):
+            
+            # --- BEFORE TAB 4 PLOT LOOP ---
+            enforce_cloud_memory_limit(limit_mb=RAM_limit, hard_stop=True)
+            
+            
             parsed_data = []
             
             global_zmin, global_zmax = float('inf'), float('-inf')
@@ -950,6 +1039,12 @@ with tab4:
             global_ymin, global_ymax = float('inf'), float('-inf')
             
             for file_obj in selected_files:
+                
+                # Soft RAM check inside the loop
+                if not enforce_cloud_memory_limit(limit_mb=RAM_limit-50, hard_stop=False):
+                    st.warning(f"⚠️ Rendering stopped early due to memory limits. Displaying the first {len(parsed_data)} models.")
+                    break
+                
                 file_ext = os.path.splitext(file_obj.name)[1].lower()
                 
                 try:
@@ -1019,6 +1114,8 @@ with tab4:
                             
                 except Exception as e:
                     st.error(f"Error processing {file_obj.name}: {e}")
+                    
+            enforce_cloud_memory_limit(limit_mb=RAM_limit, hard_stop=True)    
 
             if parsed_data:
                 fig = go.Figure()
