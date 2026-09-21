@@ -35,8 +35,12 @@ if 'last_drawing' not in st.session_state:
     st.session_state.last_drawing = None
 if 'ready_zip_data' not in st.session_state:
     st.session_state.ready_zip_data = None
+if 'ready_bat_data' not in st.session_state:
+    st.session_state.ready_bat_data = None
 if 'processed_batch_zip' not in st.session_state:
     st.session_state.processed_batch_zip = None
+if 'filtered_tile_ids' not in st.session_state:
+    st.session_state.filtered_tile_ids = None
 
 # Texas EPSG Coordinate Reference Systems
 TEXAS_EPSG_DICT = {
@@ -350,6 +354,11 @@ with tab1:
             drawn_geom = shape(st.session_state.last_drawing["geometry"])
             active_gdf = all_shapefiles[selected_shp]
             intersecting_tiles = active_gdf[active_gdf.intersects(drawn_geom)]
+            
+            # Apply filter if rows were removed from the table
+            if st.session_state.filtered_tile_ids is not None:
+                intersecting_tiles = intersecting_tiles[intersecting_tiles[id_field].isin(st.session_state.filtered_tile_ids)]
+
             if not intersecting_tiles.empty:
                 tiles_to_download_ids = intersecting_tiles[id_field].astype(str).tolist()
                 tooltip_fields = [id_field]
@@ -375,6 +384,8 @@ with tab1:
             if map_data["last_active_drawing"] != st.session_state.last_drawing:
                 st.session_state.last_drawing = map_data["last_active_drawing"]
                 st.session_state.ready_zip_data = None
+                st.session_state.ready_bat_data = None
+                st.session_state.filtered_tile_ids = None
                 
                 try:
                     drawn_geom = shape(map_data["last_active_drawing"]["geometry"])
@@ -400,6 +411,8 @@ with tab1:
             if st.session_state.last_drawing is not None and st.button("🗑️ Clear Selection", use_container_width=True):
                 st.session_state.last_drawing = None
                 st.session_state.ready_zip_data = None
+                st.session_state.ready_bat_data = None
+                st.session_state.filtered_tile_ids = None
                 st.session_state.map_key_version += 1
                 st.rerun()
 
@@ -410,7 +423,30 @@ with tab1:
             display_cols = [id_field]
             if collection_field and collection_field in intersecting_tiles.columns and collection_field != id_field:
                 display_cols.append(collection_field)
-            st.dataframe(intersecting_tiles[display_cols], hide_index=True, use_container_width=True, height=400)
+            
+            # Interactive Table
+            df_to_edit = intersecting_tiles[display_cols].copy()
+            df_to_edit.insert(0, "Select", False)
+            
+            edited_df = st.data_editor(
+                df_to_edit, 
+                hide_index=True, 
+                use_container_width=True, 
+                height=310,
+                column_config={"Select": st.column_config.CheckboxColumn("Select", default=False)}
+            )
+            
+            col_rem1, col_rem2 = st.columns(2)
+            with col_rem1:
+                if st.button("Remove Selected", use_container_width=True):
+                    keep_ids = edited_df[~edited_df["Select"]][id_field].tolist()
+                    st.session_state.filtered_tile_ids = keep_ids
+                    st.rerun()
+            with col_rem2:
+                if st.button("Remove Unselected", use_container_width=True):
+                    keep_ids = edited_df[edited_df["Select"]][id_field].tolist()
+                    st.session_state.filtered_tile_ids = keep_ids
+                    st.rerun()
         else:
             st.info("Draw a bounding box on the map to select tiles.")
             
@@ -431,6 +467,12 @@ with tab1:
         selected_ft = st.selectbox("File Type (DEM .tif or .img and for contours .zip) ", file_types, index=(2 if 'hypso' in selected_item or 'contour' in selected_item else 0))
 
     st.markdown("---")
+    
+    download_method = st.radio(
+        "Download Method", 
+        ["Cloud Download (.zip)", "Local Script (.bat) - Recommended for large numbers of tiles"], 
+        horizontal=True
+    )
 
     if st.button("🚀 Start Download", type="primary", use_container_width=True):
         if not tiles_to_download_ids:
@@ -480,60 +522,68 @@ with tab1:
             st.error("No matching files found on S3.")
             st.stop()
 
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        zip_buffer = io.BytesIO()
-        
-        # with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        #     for i, (dem_id, download_url, filename, name_no_ext) in enumerate(files_to_download):
-        #         status_text.text(f"Downloading ({i+1}/{len(files_to_download)}): {filename}")
-        #         try:
-        #             response = requests.get(download_url, stream=True)
-        #             response.raise_for_status()
-        #             content = response.content
-        #             zip_file.writestr(filename, content)
-        #         except Exception as e:
-        #             st.error(f"Failed on {filename}: {e}")
-        #         progress_bar.progress((i + 1) / len(files_to_download))
+        if "Cloud Download (.zip)" in download_method:
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            zip_buffer = io.BytesIO()
+            
+            # --- BEFORE TAB 1 DOWNLOAD LOOP ---
+            enforce_cloud_memory_limit(limit_mb=RAM_limit, hard_stop=True)
+            
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                for i, (dem_id, download_url, filename, name_no_ext) in enumerate(files_to_download):
+                    
+                    # Soft RAM check inside the loop
+                    if not enforce_cloud_memory_limit(limit_mb=RAM_limit-50, hard_stop=False):
+                        st.warning(f"⚠️ Memory limit approaching. Stopping at {i} of {len(files_to_download)} files. The partial batch is ready for download below.")
+                        break
+    
+                    status_text.text(f"Downloading ({i+1}/{len(files_to_download)}): {filename}")
+                    try:
+                        response = requests.get(download_url, stream=True)
+                        response.raise_for_status()
+                        content = response.content
+                        zip_file.writestr(filename, content)
+                    except Exception as e:
+                        st.error(f"Failed on {filename}: {e}")
+                    progress_bar.progress((i + 1) / len(files_to_download))
+    
+            status_text.text("✅ Download process completed.")
+            zip_buffer.seek(0)
+            st.session_state.ready_zip_data = zip_buffer.getvalue()
+            st.session_state.ready_bat_data = None
+            
+            # --- AFTER TAB 1 DOWNLOAD LOOP ---
+            enforce_cloud_memory_limit(limit_mb=RAM_limit, hard_stop=True)
+            
+        else:
+            # Generate BAT script to bypass server memory limits
+            bat_script = "@echo off\n"
+            bat_script += f"echo Downloading {len(files_to_download)} TNRIS Tiles...\n"
+            for dem_id, download_url, filename, name_no_ext in files_to_download:
+                bat_script += f'curl -o "{filename}" "{download_url}"\n'
+            bat_script += "echo Download complete!\npause\n"
+            
+            st.session_state.ready_bat_data = bat_script
+            st.session_state.ready_zip_data = None
+            st.success("✅ Batch script generated successfully!")
 
-        # status_text.text("✅ All downloads complete!")
-        # zip_buffer.seek(0)
-        # st.session_state.ready_zip_data = zip_buffer.getvalue()
-        # --- BEFORE TAB 1 DOWNLOAD LOOP ---
-        
-        enforce_cloud_memory_limit(limit_mb=RAM_limit, hard_stop=True)
-        
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-            for i, (dem_id, download_url, filename, name_no_ext) in enumerate(files_to_download):
-                
-                # Soft RAM check inside the loop
-                if not enforce_cloud_memory_limit(limit_mb=RAM_limit-50, hard_stop=False):
-                    st.warning(f"⚠️ Memory limit approaching. Stopping at {i} of {len(files_to_download)} files. The partial batch is ready for download below.")
-                    break
-
-                status_text.text(f"Downloading ({i+1}/{len(files_to_download)}): {filename}")
-                try:
-                    response = requests.get(download_url, stream=True)
-                    response.raise_for_status()
-                    content = response.content
-                    zip_file.writestr(filename, content)
-                except Exception as e:
-                    st.error(f"Failed on {filename}: {e}")
-                progress_bar.progress((i + 1) / len(files_to_download))
-
-        status_text.text("✅ Download process completed.")
-        zip_buffer.seek(0)
-        st.session_state.ready_zip_data = zip_buffer.getvalue()
-        
-        # --- AFTER TAB 1 DOWNLOAD LOOP ---
-        enforce_cloud_memory_limit(limit_mb=RAM_limit, hard_stop=True)
-
-    if st.session_state.ready_zip_data is not None:
+    if st.session_state.get('ready_zip_data') is not None:
         st.download_button(
             label="💾 Save Downloaded Tiles (.zip)",
             data=st.session_state.ready_zip_data,
             file_name=f"TNRIS_Downloads_{selected_item}.zip",
             mime="application/zip",
+            type="primary",
+            use_container_width=True
+        )
+        
+    if st.session_state.get('ready_bat_data') is not None:
+        st.download_button(
+            label="💾 Save Local Download Script (.bat)",
+            data=st.session_state.ready_bat_data,
+            file_name=f"TNRIS_Downloads_{selected_item}.bat",
+            mime="text/plain",
             type="primary",
             use_container_width=True
         )
