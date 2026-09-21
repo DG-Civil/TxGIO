@@ -41,6 +41,10 @@ if 'processed_batch_zip' not in st.session_state:
     st.session_state.processed_batch_zip = None
 if 'filtered_tile_ids' not in st.session_state:
     st.session_state.filtered_tile_ids = None
+if 'editor_suffix' not in st.session_state:
+    st.session_state.editor_suffix = 0
+if 'force_select' not in st.session_state:
+    st.session_state.force_select = False
 
 # Texas EPSG Coordinate Reference Systems
 TEXAS_EPSG_DICT = {
@@ -386,6 +390,8 @@ with tab1:
                 st.session_state.ready_zip_data = None
                 st.session_state.ready_bat_data = None
                 st.session_state.filtered_tile_ids = None
+                st.session_state.force_select = False
+                st.session_state.editor_suffix += 1
                 
                 try:
                     drawn_geom = shape(map_data["last_active_drawing"]["geometry"])
@@ -413,7 +419,9 @@ with tab1:
                 st.session_state.ready_zip_data = None
                 st.session_state.ready_bat_data = None
                 st.session_state.filtered_tile_ids = None
+                st.session_state.force_select = False
                 st.session_state.map_key_version += 1
+                st.session_state.editor_suffix += 1
                 st.rerun()
 
     with col2:
@@ -424,28 +432,45 @@ with tab1:
             if collection_field and collection_field in intersecting_tiles.columns and collection_field != id_field:
                 display_cols.append(collection_field)
             
-            # Interactive Table
-            df_to_edit = intersecting_tiles[display_cols].copy()
-            df_to_edit.insert(0, "Select", False)
+            # Dataframe must have a clean index for data_editor state tracking
+            df_to_edit = intersecting_tiles[display_cols].copy().reset_index(drop=True)
+            df_to_edit.insert(0, "Select", st.session_state.force_select)
+            
+            col_sel1, col_sel2 = st.columns(2)
+            with col_sel1:
+                if st.button("☑️ Select All", use_container_width=True):
+                    st.session_state.force_select = True
+                    st.session_state.editor_suffix += 1
+                    st.rerun()
+            with col_sel2:
+                if st.button("☐ Unselect All", use_container_width=True):
+                    st.session_state.force_select = False
+                    st.session_state.editor_suffix += 1
+                    st.rerun()
             
             edited_df = st.data_editor(
                 df_to_edit, 
                 hide_index=True, 
                 use_container_width=True, 
-                height=310,
-                column_config={"Select": st.column_config.CheckboxColumn("Select", default=False)}
+                height=250,
+                column_config={"Select": st.column_config.CheckboxColumn("Select", default=False)},
+                key=f"editor_{st.session_state.map_key_version}_{st.session_state.editor_suffix}"
             )
             
             col_rem1, col_rem2 = st.columns(2)
             with col_rem1:
-                if st.button("Remove Selected", use_container_width=True):
+                if st.button("🗑️ Remove Selected", use_container_width=True):
                     keep_ids = edited_df[~edited_df["Select"]][id_field].tolist()
                     st.session_state.filtered_tile_ids = keep_ids
+                    st.session_state.force_select = False
+                    st.session_state.editor_suffix += 1
                     st.rerun()
             with col_rem2:
-                if st.button("Remove Unselected", use_container_width=True):
+                if st.button("🗑️ Remove Unselected", use_container_width=True):
                     keep_ids = edited_df[edited_df["Select"]][id_field].tolist()
                     st.session_state.filtered_tile_ids = keep_ids
+                    st.session_state.force_select = False
+                    st.session_state.editor_suffix += 1
                     st.rerun()
         else:
             st.info("Draw a bounding box on the map to select tiles.")
