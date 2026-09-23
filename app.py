@@ -490,9 +490,11 @@ with tab1:
         st.write(f"🔍 Total Collections Loaded: {len(collections)}")
         
         selected_collection = st.selectbox(
-            "TNRIS Collection (select the Matched Tiles Collection name)", 
-            collections
+            "TNRIS Collection (select the Matched Tiles Collection name)",
+            collections,
+            key="tnris_collection_dropdown"  # Added unique key
         )
+        
     with col_ds2:
         items = fetch_tnris_items(selected_collection)
         selected_item = st.selectbox("Item Data Type ", items)
