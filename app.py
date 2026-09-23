@@ -134,51 +134,39 @@ def load_shapefiles(shp_dir="shp"):
 #     return sorted(collections) if collections else ['stratmap-2024-50cm-hays-williamson-counties']
 
 
+
+
+import boto3
+from botocore import UNSIGNED
+from botocore.config import Config
+
+
 @st.cache_data(ttl=3600)
 def fetch_tnris_collections():
-    collections = []
-    continuation_token = None
-    
     try:
-        while True:
-            # Use ListObjectsV2 (list-type=2) to support continuation tokens
-            url = "https://tnris-data-warehouse.s3.us-east-1.amazonaws.com/?list-type=2&prefix=LCD/collection/&delimiter=/"
-            if continuation_token:
-                url += f"&continuation-token={continuation_token}"
-                
-            resp = requests.get(url, timeout=15)
-            resp.raise_for_status()
-            
-            root = ET.fromstring(resp.content)
-            
-            # Extract all folder prefixes, safely ignoring namespaces
-            for elem in root.iter():
-                if elem.tag.endswith('Prefix'):
-                    val = elem.text
-                    if val and val.startswith('LCD/collection/') and val != 'LCD/collection/':
-                        collection_name = val.split('/')[-2]
-                        collections.append(collection_name)
-            
-            # Check if S3 truncated the results (more pages exist)
-            is_truncated_elem = root.find('.//{*}IsTruncated')
-            is_truncated = is_truncated_elem is not None and is_truncated_elem.text.lower() == 'true'
-            
-            if not is_truncated:
-                break
-                
-            # Get the token for the next batch
-            token_elem = root.find('.//{*}NextContinuationToken')
-            if token_elem is not None and token_elem.text:
-                continuation_token = token_elem.text
-            else:
-                break
-                
-    except Exception as e:
-        print(f"Error fetching collections: {e}")
-        pass
+        # Configure client for public anonymous S3 bucket access
+        s3_client = boto3.client('s3', config=Config(signature_version=UNSIGNED))
+        paginator = s3_client.get_paginator('list_objects_v2')
         
-    return sorted(list(set(collections))) if collections else ['stratmap-2024-50cm-hays-williamson-counties']
-
+        collections = []
+        page_iterator = paginator.paginate(
+            Bucket='tnris-data-warehouse',
+            Prefix='LCD/collection/',
+            Delimiter='/'
+        )
+        
+        for page in page_iterator:
+            if 'CommonPrefixes' in page:
+                for item in page['CommonPrefixes']:
+                    prefix_str = item.get('Prefix', '')
+                    if prefix_str and prefix_str != 'LCD/collection/':
+                        collection_name = prefix_str.split('/')[-2]
+                        collections.append(collection_name)
+                        
+        return sorted(list(set(collections)))
+    except Exception as e:
+        st.error(f"Error fetching collections from S3: {e}")
+        return ['stratmap-2024-50cm-hays-williamson-counties']
 
 
 @st.cache_data(ttl=3600)

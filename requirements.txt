@@ -13,3 +13,4 @@ affine
 matplotlib
 branca
 psutil
+boto3
