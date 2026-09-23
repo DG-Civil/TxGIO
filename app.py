@@ -116,22 +116,70 @@ def load_shapefiles(shp_dir="shp"):
             st.warning(f"Could not load {file}: {e}")
     return shp_dict
 
+# @st.cache_data(ttl=3600)
+# def fetch_tnris_collections():
+#     collections = []
+#     try:
+#         url = "https://tnris-data-warehouse.s3.us-east-1.amazonaws.com/?prefix=LCD/collection/&delimiter=/"
+#         resp = requests.get(url, timeout=5)
+#         if resp.status_code == 200:
+#             root = ET.fromstring(resp.content)
+#             for elem in root.iter():
+#                 if elem.tag.endswith('Prefix'):
+#                     val = elem.text
+#                     if val and val.startswith('LCD/collection/') and val != 'LCD/collection/':
+#                         collections.append(val.split('/')[-2])
+#     except Exception:
+#         pass
+#     return sorted(collections) if collections else ['stratmap-2024-50cm-hays-williamson-counties']
+
+
 @st.cache_data(ttl=3600)
 def fetch_tnris_collections():
     collections = []
+    continuation_token = None
+    
     try:
-        url = "https://tnris-data-warehouse.s3.us-east-1.amazonaws.com/?prefix=LCD/collection/&delimiter=/"
-        resp = requests.get(url, timeout=5)
-        if resp.status_code == 200:
+        while True:
+            # Use ListObjectsV2 (list-type=2) to support continuation tokens
+            url = "https://tnris-data-warehouse.s3.us-east-1.amazonaws.com/?list-type=2&prefix=LCD/collection/&delimiter=/"
+            if continuation_token:
+                url += f"&continuation-token={continuation_token}"
+                
+            resp = requests.get(url, timeout=15)
+            resp.raise_for_status()
+            
             root = ET.fromstring(resp.content)
+            
+            # Extract all folder prefixes, safely ignoring namespaces
             for elem in root.iter():
                 if elem.tag.endswith('Prefix'):
                     val = elem.text
                     if val and val.startswith('LCD/collection/') and val != 'LCD/collection/':
-                        collections.append(val.split('/')[-2])
-    except Exception:
+                        collection_name = val.split('/')[-2]
+                        collections.append(collection_name)
+            
+            # Check if S3 truncated the results (more pages exist)
+            is_truncated_elem = root.find('.//{*}IsTruncated')
+            is_truncated = is_truncated_elem is not None and is_truncated_elem.text.lower() == 'true'
+            
+            if not is_truncated:
+                break
+                
+            # Get the token for the next batch
+            token_elem = root.find('.//{*}NextContinuationToken')
+            if token_elem is not None and token_elem.text:
+                continuation_token = token_elem.text
+            else:
+                break
+                
+    except Exception as e:
+        print(f"Error fetching collections: {e}")
         pass
-    return sorted(collections) if collections else ['stratmap-2024-50cm-hays-williamson-counties']
+        
+    return sorted(list(set(collections))) if collections else ['stratmap-2024-50cm-hays-williamson-counties']
+
+
 
 @st.cache_data(ttl=3600)
 def fetch_tnris_items(collection_name):
@@ -485,16 +533,9 @@ with tab1:
         collections = fetch_tnris_collections()
         selected_collection = st.selectbox("TNRIS Collection (select the Matched Tiles Collection name)", collections)
         
-
         # Temporary debug indicator
         st.write(f"🔍 Total Collections Loaded: {len(collections)}")
-        
-        selected_collection = st.selectbox(
-            "TNRIS Collection (select the Matched Tiles Collection name)",
-            collections,
-            key="tnris_collection_dropdown"  # Added unique key
-        )
-        
+                
     with col_ds2:
         items = fetch_tnris_items(selected_collection)
         selected_item = st.selectbox("Item Data Type ", items)
