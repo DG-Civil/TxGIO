@@ -484,6 +484,15 @@ with tab1:
     with col_ds1:
         collections = fetch_tnris_collections()
         selected_collection = st.selectbox("TNRIS Collection (select the Matched Tiles Collection name)", collections)
+        
+
+        # Temporary debug indicator
+        st.write(f"🔍 Total Collections Loaded: {len(collections)}")
+        
+        selected_collection = st.selectbox(
+            "TNRIS Collection (select the Matched Tiles Collection name)", 
+            collections
+        )
     with col_ds2:
         items = fetch_tnris_items(selected_collection)
         selected_item = st.selectbox("Item Data Type ", items)
